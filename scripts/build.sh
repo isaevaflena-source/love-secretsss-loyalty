@@ -8,6 +8,6 @@ rm -rf "$dist_root"
 mkdir -p "$dist_root/server" "$dist_root/.openai"
 cp "$project_root/worker/index.js" "$dist_root/server/index.js"
 cp "$project_root/.openai/hosting.json" "$dist_root/.openai/hosting.json"
-node "$project_root/scripts/embed-page.mjs" "$project_root/worker/page.html" "$dist_root/server/index.js"
+node "$project_root/scripts/embed-page.mjs" "$project_root/worker/page.html" "$dist_root/server/index.js" "$project_root/worker/client.js" "$project_root/worker/icon.svg" "$project_root/worker/icon-192.png" "$project_root/worker/icon-512.png"
 
 echo "Built $dist_root"
