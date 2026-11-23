@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs><linearGradient id="silk" x2="1" y2="1"><stop stop-color="#fffdf5"/><stop offset=".4" stop-color="#d2c7b2"/><stop offset=".75" stop-color="#fffdfa"/><stop offset="1" stop-color="#c1b39b"/></linearGradient></defs>
+<rect width="512" height="512" rx="112" fill="url(#silk)"/>
+<path d="M270 130c-7-12-23-16-34-4-14 15-5 31 34 60 39-29 48-45 34-60-11-12-27-8-34 4Z" fill="#650c2b"/>
+<text x="256" y="307" font-family="Georgia,serif" font-size="133" text-anchor="middle" letter-spacing="7" fill="#650c2b">LOVE</text>
+<text x="256" y="365" font-family="Georgia,serif" font-size="42" font-style="italic" text-anchor="middle" letter-spacing="5" fill="#650c2b">secretsss</text>
+</svg>
