@@ -11,7 +11,18 @@ function doGet() {
 }
 function rows(sheet) {
   const last = sheet.getLastRow();
-  return last < 2 ? [] : sheet.getRange(2, 1, last - 1, 10).getValues().filter(row => row[1] && row[8]);
+  return last < 2 ? [] : sheet.getRange(2, 1, last - 1, 10).getValues()
+    .filter(row => row[1] && row[8])
+    .map(row => [normalDate(row[0]), normalPhone(row[1]) || String(row[1]), ...row.slice(2)]);
+}
+function normalDate(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return Utilities.formatDate(value, 'Europe/Moscow', 'yyyy-MM-dd HH:mm:ss');
+  const text = String(value || '');
+  if (/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:?\d\d)$/.test(text)) {
+    const parsed = new Date(text);
+    if (!isNaN(parsed.getTime())) return Utilities.formatDate(parsed, 'Europe/Moscow', 'yyyy-MM-dd HH:mm:ss');
+  }
+  return text;
 }
 function normalPhone(value) {
   let digits = String(value || '').replace(/\D/g, '');
@@ -108,6 +119,7 @@ function append(sheet, payload) {
   const staff = String(payload.staff || 'Кассир').slice(0, 80);
   const row = [date, phone, type, purchase, accrued, redeemed, after, staff, id, name];
   sheet.appendRow(row);
+  sheet.getRange(sheet.getLastRow(), 2).setNumberFormat('@').setRichTextValue(SpreadsheetApp.newRichTextValue().setText(phone).build());
   SpreadsheetApp.flush();
   return { ok: true, operation: toOperation(row) };
 }
