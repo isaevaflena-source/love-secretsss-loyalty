@@ -29,9 +29,19 @@ function operationTime(value) {
   const parsed = Date.parse(String(value || '').trim().replace(' ', 'T') + '+03:00');
   return Number.isFinite(parsed) ? parsed : 0;
 }
-function lockUntil(client) {
-  const latest = Math.max(0, ...operations.filter(r => r.phone === client && r.type === 'Начисление').map(r => operationTime(r.date)));
-  return latest ? latest + 86400000 : 0;
+function pointAvailability(client) {
+  const now = Date.now();
+  let matured = 0, redeemed = 0, nextUnlockAt = 0;
+  for (const row of operations.filter(r => r.phone === client)) {
+    if (row.type === 'Начисление') {
+      const unlock = operationTime(row.date) + 86400000;
+      if (unlock <= now) matured += row.accrued;
+      else if (!nextUnlockAt || unlock < nextUnlockAt) nextUnlockAt = unlock;
+    } else if (row.type === 'Списание') redeemed += row.redeemed;
+  }
+  const balance = currentBalance(client);
+  const available = Math.max(0, Math.min(balance, matured - redeemed));
+  return { available, pending: balance - available, nextUnlockAt };
 }
 function currentBalance(client) {
   return stats.balances?.[client] || 0;
@@ -40,10 +50,10 @@ function totalSpent(client) {
   return operations.filter(r => r.phone === client && r.type === 'Начисление').reduce((sum, r) => sum + r.purchase, 0);
 }
 function tierFor(total) {
-  if (total >= 30000) return { key: 'empress', name: 'Императрица', rate: .15, next: 0, phrase: 'Ваше величие заслуживает особенного.' };
-  if (total >= 15000) return { key: 'queen', name: 'Королева', rate: .15, next: 30000, phrase: 'Выбирайте себя каждый день.' };
+  if (total >= 30000) return { key: 'empress', name: 'Императрица', rate: .10, next: 0, phrase: 'Ваше величие заслуживает особенного.' };
+  if (total >= 15000) return { key: 'queen', name: 'Королева', rate: .10, next: 30000, phrase: 'Выбирайте себя каждый день.' };
   if (total >= 5000) return { key: 'princess', name: 'Принцесса', rate: .10, next: 15000, phrase: 'Ваша сказка только начинается.' };
-  return { key: 'lady', name: 'Леди', rate: .07, next: 5000, phrase: 'Ваше очарование — уже повод для праздника.' };
+  return { key: 'lady', name: 'Леди', rate: .10, next: 5000, phrase: 'Ваше очарование — уже повод для праздника.' };
 }
 function showPage(page) {
   if (access === 'cashier' && page !== 'cash') return;
@@ -67,13 +77,13 @@ function preview() {
   const amount = Number($('amount').value.replace(/\s/g, '').replace(',', '.'));
   const reached = tierFor(totalSpent(activePhone) + Math.max(0, amount));
   $('preview-points').textContent = fmt(amount > 0 ? Math.floor(amount * reached.rate + 1e-9) : 0) + ' баллов';
-  $('preview-rate').textContent = `После этой покупки: ${reached.name.toLowerCase()} · ${Math.round(reached.rate * 100)}% баллами`;
+  $('preview-rate').textContent = `Начисление 10% · уровень после покупки: ${reached.name.toLowerCase()}. Новые баллы доступны через 24 часа.`;
   const balance = currentBalance(activePhone);
+  const availability = pointAvailability(activePhone);
   const points = Number($('points').value || 0);
   $('preview-balance').textContent = activePhone ? fmt(Math.max(0, balance - points)) + ' баллов' : '—';
-  const until = lockUntil(activePhone);
-  $('redeem-lock').textContent = until > Date.now() ? 'Списание станет доступно ' + new Date(until).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' }) + ' (МСК).' : points > balance ? 'Нельзя списать больше текущего баланса.' : '';
-  $('submit').disabled = type === 'redeem' && !!activePhone && (until > Date.now() || points > balance);
+  $('redeem-lock').textContent = points > balance ? 'Нельзя списать больше текущего баланса.' : points > availability.available ? `Доступно сейчас: ${fmt(availability.available)}. Новые баллы откроются через 24 часа после начисления.` : availability.pending ? `Доступно сейчас: ${fmt(availability.available)}. В ожидании: ${fmt(availability.pending)}.` : `Доступно сейчас: ${fmt(availability.available)} баллов.`;
+  $('submit').disabled = type === 'redeem' && !!activePhone && (points > availability.available || availability.available === 0);
 }
 $('amount').oninput = () => { pendingId = null; preview(); };
 $('points').oninput = () => { pendingId = null; preview(); };
@@ -84,6 +94,8 @@ function renderClient() {
   $('client-name-label').textContent = known || 'Баланс клиента';
   $('name-wrap').hidden = !activePhone || !!known;
   $('balance').textContent = activePhone ? fmt(currentBalance(activePhone)) : '—';
+  const availability = pointAvailability(activePhone);
+  $('balance-status').textContent = activePhone && known ? `Доступно к списанию: ${fmt(availability.available)} · ожидают 24 часа: ${fmt(availability.pending)}` : '';
   const tier = tierFor(totalSpent(activePhone));
   $('level-line').textContent = activePhone && known ? `${tier.name} · покупок на ${fmt(totalSpent(activePhone))} ₽` : '';
   const rows = operations.filter(row => row.phone === activePhone).reverse().slice(0, 8);
@@ -266,6 +278,8 @@ function renderWallet(data) {
   $('wallet-balance').replaceChildren(document.createTextNode(fmt(p.balance) + ' '));
   const unit = document.createElement('span'); unit.textContent = 'баллов'; $('wallet-balance').append(unit);
   $('wallet-rate').textContent = `${Math.round(t.rate * 100)}% от покупки возвращаются баллами. 1 балл = 1 ₽.`;
+  $('wallet-available').textContent = `Доступно к списанию: ${fmt(p.available)} баллов.`;
+  $('wallet-pending').textContent = p.pending ? `${fmt(p.pending)} баллов ожидают 24 часа после покупки${p.nextUnlockAt ? '. Ближайшее начисление откроется ' + new Date(p.nextUnlockAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' }) + ' МСК' : ''}.` : 'Все начисленные баллы доступны к списанию.';
   $('wallet-gift').textContent = t.key === 'empress' ? 'Ваше преимущество: гарантированный подарок от бренда каждый месяц и приоритетные новости о новинках.' : tierFor(p.spent).phrase;
   $('wallet-progress').textContent = `Общая сумма покупок: ${fmt(p.spent)} ₽`;
   const previous = t.key === 'lady' ? 0 : t.key === 'princess' ? 5000 : t.key === 'queen' ? 15000 : 30000;
@@ -289,8 +303,8 @@ $('submit').onclick = async () => {
   else renderClient();
   if (!activePhone) { message('Введите корректный номер телефона.', 'error'); $('phone').focus(); return; }
   if (!$('name-wrap').hidden && !$('client-name-input').value.trim()) { message('Укажите ФИО нового клиента.', 'error'); $('client-name-input').focus(); return; }
-  if (type === 'redeem' && lockUntil(activePhone) > Date.now()) { message('Списание возможно через 24 часа после последнего начисления.', 'error'); return; }
   if (type === 'redeem' && Number($('points').value || 0) > currentBalance(activePhone)) { message('Нельзя списать больше текущего баланса.', 'error'); return; }
+  if (type === 'redeem' && Number($('points').value || 0) > pointAvailability(activePhone).available) { message('Новые баллы можно потратить через 24 часа после начисления.', 'error'); return; }
   if (!pendingId) pendingId = crypto.randomUUID();
   const payload = { id: pendingId, phone: activePhone, name: $('client-name-input').value, type, amount: $('amount').value.replace(/\s/g, ''), points: $('points').value };
   const button = $('submit'); button.disabled = true; button.textContent = 'Сохраняем…'; message('');
@@ -360,3 +374,4 @@ async function start() {
 }
 start();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+setInterval(() => { if (access === 'cashier' || access === 'owner') { if (activePhone) { renderClient(); } } else if (access === 'client') loadClient(); }, 60000);

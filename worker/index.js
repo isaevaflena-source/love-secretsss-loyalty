@@ -88,16 +88,30 @@ function stats(rows) {
   return { purchases, customers: Object.keys(balances).length, accrued, redeemed, balance: accrued - redeemed, sales, balances };
 }
 function tierFor(total) {
-  if (total >= 30000) return { key: 'empress', name: 'Императрица', rate: 0.15, next: null };
-  if (total >= 15000) return { key: 'queen', name: 'Королева', rate: 0.15, next: 30000 };
+  if (total >= 30000) return { key: 'empress', name: 'Императрица', rate: 0.10, next: null };
+  if (total >= 15000) return { key: 'queen', name: 'Королева', rate: 0.10, next: 30000 };
   if (total >= 5000) return { key: 'princess', name: 'Принцесса', rate: 0.10, next: 15000 };
-  return { key: 'lady', name: 'Леди', rate: 0.07, next: 5000 };
+  return { key: 'lady', name: 'Леди', rate: 0.10, next: 5000 };
+}
+function pointAvailability(rows, now = Date.now()) {
+  let total = 0, matured = 0, redeemed = 0, nextUnlockAt = null;
+  for (const row of rows) {
+    if (row.type === 'Начисление') {
+      total += row.accrued;
+      const unlock = operationTime(row.date) + 86400000;
+      if (unlock <= now) matured += row.accrued;
+      else if (!nextUnlockAt || unlock < nextUnlockAt) nextUnlockAt = unlock;
+    } else if (row.type === 'Списание') redeemed += row.redeemed;
+  }
+  const balance = Math.max(0, total - redeemed);
+  const available = Math.max(0, Math.min(balance, matured - redeemed));
+  return { balance, available, pending: balance - available, nextUnlockAt: nextUnlockAt ? new Date(nextUnlockAt).toISOString() : null };
 }
 function profile(rows, client) {
   const own = rows.filter(r => r.phone === client);
   const spent = own.reduce((sum, r) => sum + (r.type === 'Начисление' ? r.purchase : 0), 0);
   const fullName = own.find(r => r.name)?.name || '';
-  return { name: fullName.split(' ')[1] || fullName.split(' ')[0] || '', spent, balance: stats(own).balance, tier: tierFor(spent) };
+  return { name: fullName.split(' ')[1] || fullName.split(' ')[0] || '', spent, ...pointAvailability(own), tier: tierFor(spent) };
 }
 async function notifications(env) {
   const data = await bridge(env, 'notifications_read');
@@ -195,7 +209,7 @@ async function writeRoute(request, env, access) {
   try { operations = await read(env); } catch (e) { return reply({ error: e.message }, 502); }
   const old = operations.find(r => r.id === body.id);
   if (old) return reply({ operation: old, duplicate: true });
-  const current = stats(operations).balances[client] || 0;
+  const availability = pointAvailability(operations.filter(r => r.phone === client));
   const knownName = operations.find(r => r.phone === client && r.name)?.name;
   const name = knownName || fullName(body.name);
   if (!name) return reply({ error: 'Для нового клиента укажите фамилию и имя (при наличии — отчество).' }, 400);
@@ -205,16 +219,13 @@ async function writeRoute(request, env, access) {
     if (!/^\d{1,9}([.,]\d{1,2})?$/.test(input)) return reply({ error: 'Введите корректную сумму покупки в рублях.' }, 400);
     purchase = Number(input.replace(',', '.'));
     if (purchase <= 0 || purchase > 100000000) return reply({ error: 'Введите сумму покупки от 0,01 до 100 000 000 ₽.' }, 400);
-    const priorSpend = operations.filter(r => r.phone === client && r.type === 'Начисление').reduce((sum, r) => sum + r.purchase, 0);
-    accrued = Math.floor(purchase * tierFor(priorSpend + purchase).rate + 1e-9);
+    accrued = Math.floor(purchase * 0.10 + 1e-9);
     if (!accrued) return reply({ error: 'С этой суммы начислится 0 баллов. Увеличьте сумму покупки.' }, 400);
   } else {
     redeemed = Number(body.points);
     if (!Number.isSafeInteger(redeemed) || redeemed < 1) return reply({ error: 'Введите целое число баллов.' }, 400);
-    if (redeemed > current) return reply({ error: `Недостаточно баллов. На счёте ${current}.` }, 409);
-    const latestAccrual = Math.max(0, ...operations.filter(r => r.phone === client && r.type === 'Начисление').map(r => operationTime(r.date)));
-    const unlockAt = latestAccrual + 24 * 60 * 60 * 1000;
-    if (latestAccrual && Date.now() < unlockAt) return reply({ error: 'Списать баллы можно через 24 часа после последнего начисления.', unlockAt: new Date(unlockAt).toISOString() }, 409);
+    if (redeemed > availability.balance) return reply({ error: `Недостаточно баллов. На счёте ${availability.balance}.` }, 409);
+    if (redeemed > availability.available) return reply({ error: `Доступно к списанию ${availability.available} баллов. Новые баллы станут доступны через 24 часа после начисления.`, unlockAt: availability.nextUnlockAt }, 409);
   }
   try {
     const result = await bridge(env, 'append', { id: body.id, phone: client, name, type: body.type, amount: body.amount, points: body.points, staff: access === 'owner' ? 'Фатима' : 'Кассир' });
