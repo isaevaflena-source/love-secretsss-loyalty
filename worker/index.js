@@ -3,7 +3,7 @@ const iconSvg = __ICON_SVG__;
 const icon192 = __ICON_192__;
 const icon512 = __ICON_512__;
 const manifest = { name: 'Love secretsss · Карта лояльности', short_name: 'Love secretsss', description: 'Баллы, уровни и новости клуба Love secretsss', start_url: '/', scope: '/', display: 'standalone', background_color: '#fffafa', theme_color: '#5a102a', icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }] };
-const serviceWorker = `const CACHE='love-secretsss-v2';self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/icon-192.png','/icon-512.png'])).then(()=>self.skipWaiting())));self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));self.addEventListener('fetch',e=>{if(e.request.mode==='navigate')e.respondWith(fetch(e.request).catch(()=>caches.match('/')))});`;
+const serviceWorker = `const CACHE='love-secretsss-v3';self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/icon-192.png','/icon-512.png'])).then(()=>self.skipWaiting())));self.addEventListener('activate',e=>e.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))),self.clients.claim()])));self.addEventListener('fetch',e=>{if(e.request.mode==='navigate')e.respondWith(fetch(e.request).catch(()=>caches.match('/')))});`;
 
 function cookie(request, key) {
   return request.headers.get('Cookie')?.split(';').map(x => x.trim()).find(x => x.startsWith(key + '='))?.slice(key.length + 1) || '';
@@ -72,10 +72,18 @@ async function read(env) {
   const data = await bridge(env, 'read');
   if (!Array.isArray(data.values)) throw new Error('Не удалось прочитать реестр операций.');
   return data.values.filter(r => r[1] && r[8]).map(r => ({
-    date: String(r[0] || ''), phone: String(r[1]), type: String(r[2] || ''),
+    date: normalDate(r[0]), phone: phone(r[1]) || String(r[1]), type: String(r[2] || ''),
     purchase: Number(r[3] || 0), accrued: Number(r[4] || 0), redeemed: Number(r[5] || 0),
     balanceAfter: Number(r[6] || 0), staff: String(r[7] || ''), id: String(r[8]), name: String(r[9] || '')
   }));
+}
+function normalDate(value) {
+  const text = String(value || '');
+  if (/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:?\d\d)$/.test(text)) {
+    const date = new Date(text);
+    if (Number.isFinite(date.getTime())) return nowMoscow(date);
+  }
+  return text;
 }
 function stats(rows) {
   const balances = Object.create(null);
@@ -118,8 +126,8 @@ async function notifications(env) {
   if (!Array.isArray(data.values)) throw new Error('Не удалось прочитать уведомления.');
   return data.values.map(r => ({ id: String(r[0] || ''), date: String(r[1] || ''), target: String(r[2] || ''), category: String(r[3] || ''), title: String(r[4] || ''), body: String(r[5] || '') })).filter(r => r.id && r.title);
 }
-function nowMoscow() {
-  const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(new Date());
+function nowMoscow(date = new Date()) {
+  const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(date);
   const v = x => p.find(i => i.type === x)?.value || '00';
   return `${v('year')}-${v('month')}-${v('day')} ${v('hour')}:${v('minute')}:${v('second')}`;
 }

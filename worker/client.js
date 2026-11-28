@@ -19,7 +19,8 @@ function phone(value) {
   return digits.length === 11 && digits[0] === '7' ? '+' + digits : null;
 }
 function pretty(value) {
-  return value ? '+7 (' + value.slice(2, 5) + ') ' + value.slice(5, 8) + '-' + value.slice(8, 10) + '-' + value.slice(10) : '';
+  const canonical = phone(value);
+  return canonical ? '+7 (' + canonical.slice(2, 5) + ') ' + canonical.slice(5, 8) + '-' + canonical.slice(8, 10) + '-' + canonical.slice(10) : String(value || '');
 }
 function message(text, kind = '') {
   $('message').textContent = text;
