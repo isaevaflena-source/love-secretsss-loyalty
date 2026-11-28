@@ -28,8 +28,18 @@ function operationMs(value) {
   const parsed = Date.parse(String(value || '').trim().replace(' ', 'T') + '+03:00');
   return Number.isFinite(parsed) ? parsed : 0;
 }
-function tierRate(total) {
-  return total >= 15000 ? .15 : total >= 5000 ? .10 : .07;
+function pointAvailability(clientRows) {
+  const now = Date.now();
+  let total = 0, matured = 0, redeemed = 0;
+  for (const row of clientRows) {
+    if (row[2] === 'Начисление') {
+      const points = Number(row[4] || 0);
+      total += points;
+      if (operationMs(row[0]) + 86400000 <= now) matured += points;
+    } else if (row[2] === 'Списание') redeemed += Number(row[5] || 0);
+  }
+  const balance = Math.max(0, total - redeemed);
+  return { balance, available: Math.max(0, Math.min(balance, matured - redeemed)) };
 }
 function notificationSheet(book) {
   let sheet = book.getSheetByName(NOTIFICATION_TAB);
@@ -83,16 +93,15 @@ function append(sheet, payload) {
     if (!/^\d{1,9}([.,]\d{1,2})?$/.test(input)) return { ok: false, error: 'Введите корректную сумму покупки.' };
     purchase = Number(input.replace(',', '.'));
     if (purchase <= 0 || purchase > 100000000) return { ok: false, error: 'Некорректная сумма покупки.' };
-    const spent = clientRows.filter(row => row[2] === 'Начисление').reduce((sum, row) => sum + Number(row[3] || 0), 0);
-    accrued = Math.floor(purchase * tierRate(spent + purchase) + 1e-9);
+    accrued = Math.floor(purchase * .10 + 1e-9);
     if (!accrued) return { ok: false, error: 'С этой суммы начислится 0 баллов. Увеличьте сумму покупки.' };
   } else if (payload.type === 'redeem') {
     type = 'Списание';
     redeemed = Number(payload.points);
     if (!Number.isSafeInteger(redeemed) || redeemed < 1) return { ok: false, error: 'Введите целое число баллов.' };
-    if (redeemed > balance) return { ok: false, error: 'Недостаточно баллов. На счёте ' + balance + '.' };
-    const latest = Math.max(0, ...clientRows.filter(row => row[2] === 'Начисление').map(row => operationMs(row[0])));
-    if (latest && Date.now() < latest + 86400000) return { ok: false, error: 'Списать баллы можно через 24 часа после последнего начисления.' };
+    const availability = pointAvailability(clientRows);
+    if (redeemed > availability.balance) return { ok: false, error: 'Недостаточно баллов. На счёте ' + availability.balance + '.' };
+    if (redeemed > availability.available) return { ok: false, error: 'Доступно к списанию ' + availability.available + ' баллов. Новые баллы станут доступны через 24 часа после начисления.' };
   } else return { ok: false, error: 'Некорректный тип операции.' };
   const date = Utilities.formatDate(new Date(), 'Europe/Moscow', 'yyyy-MM-dd HH:mm:ss');
   const after = balance + accrued - redeemed;
